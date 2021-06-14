@@ -20,11 +20,19 @@ pub enum Subseq {
 pub fn subseq_gen_type(uexpr: &UnaryExpr, subseq: &Subseq, equs: &mut TypeEquations, trs: &TraitsInfo) -> TResult {
     match *subseq {
         Subseq::Call(ref call) => {
-            let caller = uexpr.gen_type(equs, trs)?;
-            let args = call.args.iter().map(|arg| arg.gen_type(equs, trs)).collect::<Result<Vec<_>, String>>()?;
-            let return_type = new_type_variable();
-            equs.add_equation(caller, Type::Func(args, Box::new(return_type.clone()), None));
-            Ok(return_type)
+            if let UnaryExpr::Subseq(mem_caller, Subseq::Member(mem)) = uexpr {
+                let caller_ty = Box::new(mem_caller.gen_type(equs, trs)?);
+                let id = mem.mem_id.clone();
+                let args = call.args.iter().map(|arg| arg.gen_type(equs, trs)).collect::<Result<Vec<_>, String>>()?;
+                Ok(Type::MemberFunc(caller_ty, id, args))
+            }
+            else {
+                let caller = uexpr.gen_type(equs, trs)?;
+                let args = call.args.iter().map(|arg| arg.gen_type(equs, trs)).collect::<Result<Vec<_>, String>>()?;
+                let return_type = new_type_variable();
+                equs.add_equation(caller, Type::Func(args, Box::new(return_type.clone()), None));
+                Ok(return_type)
+            }
         }
         Subseq::Member(ref mem) => {
             let st = uexpr.gen_type(equs, trs)?;

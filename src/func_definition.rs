@@ -16,7 +16,7 @@ use crate::trans::*;
 use crate::type_spec::*;
 use crate::traits::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelfArg {
     None,
     SelfType,
@@ -44,6 +44,12 @@ pub struct FuncDefinitionInfo {
 }
 
 impl FuncDefinitionInfo {
+    pub fn has_self_arg(&self) -> bool {
+        match self.self_arg {
+            SelfArg::None => false,
+            _ => true,
+        }
+    }
     pub fn generate_type(&self, before_mp: &GenericsTypeMap, equs: &mut TypeEquations, trs: &TraitsInfo, call_id: &Identifier) -> TResult {
         let mut gen_mp = HashMap::new();
         for (i, g_id) in self.generics.iter().enumerate() {
@@ -52,6 +58,10 @@ impl FuncDefinitionInfo {
         }
         let mp = before_mp.next(gen_mp);
         self.where_sec.regist_equations(&mp, equs, trs)?;
+        match self.self_arg {
+            SelfArg::None => {}
+            _ => { equs.get_self_type()?; }
+        }
         let args = self.args.iter().map(|(_, t)| t.generics_to_type(&mp, equs, trs)).collect::<Result<Vec<Type>, String>>()?;
         let return_type = self.return_type.generics_to_type(&mp, equs, trs)?;
         Ok(Type::Func(args, Box::new(return_type), None))
@@ -63,6 +73,9 @@ impl FuncDefinitionInfo {
         }
         if !self.where_sec.check_equal(&right.where_sec) {
             Err(format!("where_section of method {:?} is not matched", self.func_id))?;
+        }
+        if self.self_arg != right.self_arg {
+            Err(format!("self arg of method {:?} is not matched", self.func_id))?;
         }
         let mut trs = trs.into_scope();
         for g_id in self.generics.iter() {

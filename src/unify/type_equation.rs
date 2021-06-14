@@ -24,6 +24,7 @@ pub enum Type {
     AssociatedType(Box<Type>, AssociatedType),
     TraitMethod(Box<Type>, TraitMethod),
     Member(Box<Type>, Identifier),
+    MemberFunc(Box<Type>, Identifier, Vec<Type>),
     End,
 }
 
@@ -36,6 +37,14 @@ impl Type {
         match self {
             Type::SolvedAssociatedType(_, _) => true,
             Type::Generics(_, gens) => gens.iter().map(|gen| gen.is_solved_type()).all(|t| t),
+            _ => false,
+        }
+    }
+
+    fn is_generics_or_solved_associated(&self) -> bool {
+        match self {
+            Type::SolvedAssociatedType(_, _) => true,
+            Type::Generics(_, _) => true,
             _ => false,
         }
     }
@@ -92,6 +101,13 @@ impl Type {
             }
             Type::Member(ref mut ty, _) => {
                 ty.as_mut().subst(theta);
+                None
+            }
+            Type::MemberFunc(ref mut ty, _, ref mut args) => {
+                ty.subst(theta);
+                for arg in args.iter_mut() {
+                    arg.subst(theta)
+                }
                 None
             }
             Type::End => { None },
@@ -258,6 +274,7 @@ impl TypeEquations {
         let ty = self.solve_associated_type(ty, trs)?;
         let ty = self.solve_trait_method(ty, trs)?;
         let ty = self.solve_member(ty, trs)?;
+        let ty = self.solve_member_func(ty, trs)?;
         let ty = self.solve_generics(ty, trs)?;
         Ok(ty)
     }
@@ -325,37 +342,7 @@ impl TypeEquations {
     fn solve_member(&mut self, ty: Type, trs: &TraitsInfo) -> Result<Type, String> {
         if let Type::Member(inner_ty, mem_id) = ty {
             let inner_ty = self.solve_relations(*inner_ty, trs)?;
-            if inner_ty.is_solved_type() {
-                let substs = trs.match_to_member_for_type(&mem_id, &inner_ty);
-                if substs.len() == 1 {
-                    let mut substs = substs;
-                    let (subst, impl_trait) = substs.pop().unwrap();
-                    let before = self.set_self_type(Some(inner_ty.clone()));
-                    let res = impl_trait.get_trait_method_from_id(self, trs, &TraitMethodIdentifier { id: mem_id.clone() } , &subst);
-                    self.set_self_type(before);
-                    if let Type::Func(args, returns, _) = res {
-                        let mut iter = args.into_iter();
-                        let self_ty = iter.next().ok_or(format!("trait method {:?} have no argument", mem_id))?;
-                        self.add_equation(self_ty.clone(), inner_ty.clone());
-                        Ok(Type::Func(iter.collect(), returns, Some((impl_trait.get_trait_id(), Box::new(inner_ty)))))
-                    }
-                    else { unreachable!() }
-                }
-                else if let Type::Generics(ref id, ref gens) = inner_ty {
-                    match trs.search_typeid(id)? {
-                        StructDefinitionInfo::Def(def)  => def.get_member_type(self, trs, gens, &mem_id),
-                        StructDefinitionInfo::Generics  => Err(format!("generics type has no member: {:?}", id)),
-                        StructDefinitionInfo::Primitive => Err(format!("primitive type has no member: {:?}", id)),
-                    }
-                }
-                else if let Type::SolvedAssociatedType(_, _) = inner_ty {
-                    Err(format!("SolvedAssociatedType has no member: {:?}", inner_ty))
-                }
-                else {
-                    unreachable!()
-                }
-            }
-            else if let Type::Generics(ref id, ref gens) = inner_ty {
+            if let Type::Generics(ref id, ref gens) = inner_ty {
                 match trs.search_typeid(id)? {
                     StructDefinitionInfo::Def(def)  => {
                         Ok(def.get_member_type(self, trs, gens, &mem_id).unwrap_or(Type::Member(Box::new(inner_ty), mem_id)))
@@ -369,6 +356,42 @@ impl TypeEquations {
             }
             else {
                 Ok(Type::Member(Box::new(inner_ty), mem_id))
+            }
+        }
+        else {
+            Ok(ty)
+        }
+    }
+    fn solve_member_func(&mut self, ty: Type, trs: &TraitsInfo) -> Result<Type, String> {
+        if let Type::MemberFunc(inner_ty, func_id, args) = ty {
+            let inner_ty = self.solve_relations(*inner_ty, trs)?;
+            if inner_ty.is_solved_type() {
+                let substs = trs.match_to_member_for_type(&func_id, &inner_ty);
+                if substs.len() == 1 {
+                    let mut substs = substs;
+                    let (subst, impl_trait) = substs.pop().unwrap();
+                    let before = self.set_self_type(Some(inner_ty.clone()));
+                    let res = impl_trait.get_trait_method_from_id(self, trs, &TraitMethodIdentifier { id: func_id.clone() } , &subst);
+                    self.set_self_type(before);
+                    if let Type::Func(f_args, f_returns, _) = res {
+                        if args.len() != f_args.len() {
+                            Err(format!("lengths or args are not matched {:?}", func_id))
+                        }
+                        else {
+                            for (l, r) in args.into_iter().zip(f_args.into_iter()) {
+                                self.add_equation(l, r);
+                            }
+                            Ok(*f_returns)
+                        }
+                    }
+                    else { unreachable!() }
+                }
+                else {
+                    Err(format!("type {:?} is not implemented func {:?}", inner_ty, func_id))
+                }
+            }
+            else {
+                Ok(Type::MemberFunc(Box::new(inner_ty), func_id, args))
             }
         }
         else {

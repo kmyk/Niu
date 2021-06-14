@@ -167,7 +167,7 @@ impl<'a> TraitsInfo<'a> {
 
     pub fn regist_trait(&mut self, tr: &TraitDefinition) -> Result<(), String> {
         let (trait_id, trait_def) = tr.get_trait_id_pair();
-        for (id, _) in trait_def.required_methods.iter() {
+        for (id, _) in trait_def.required_methods.iter().filter(|(_, info)| info.has_self_arg()) {
             match self.member_to_traits.get_mut(&id.id) {
                 Some(st) => {
                     st.insert(trait_id.clone());
