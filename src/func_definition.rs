@@ -16,11 +16,18 @@ use crate::trans::*;
 use crate::type_spec::*;
 use crate::traits::*;
 
+#[derive(Debug, Clone)]
+pub enum SelfArg {
+    None,
+    SelfType,
+}
+
 #[derive(Debug)]
 pub struct FuncDefinition {
     pub func_id: Identifier,
     pub generics: Vec<TypeId>,
     pub where_sec: WhereSection,
+    pub self_arg: SelfArg,
     pub args: Vec<(Identifier, TypeSpec)>,
     pub return_type: TypeSpec,
     pub block: Block,
@@ -31,6 +38,7 @@ pub struct FuncDefinitionInfo {
     pub func_id: Identifier,
     pub generics: Vec<TypeId>,
     pub where_sec: WhereSection,
+    pub self_arg: SelfArg,
     pub args: Vec<(Identifier, TypeSpec)>,
     pub return_type: TypeSpec,
 }
@@ -89,6 +97,7 @@ impl FuncDefinition {
              func_id: self.func_id.clone(),
              generics: self.generics.clone(),
              where_sec: self.where_sec.clone(),
+             self_arg: self.self_arg.clone(),
              args: self.args.clone(),
              return_type: self.return_type.clone()
          }
@@ -155,10 +164,19 @@ fn parse_generics_arg(s: &str) -> IResult<&str, (TypeId, Option<TraitId>)> {
     Ok((s, (id, opt.map(|(_, _, tr)| tr))))
 }
 
+fn parse_self_arg(s: &str) -> IResult<&str, SelfArg> {
+    let (s, op) = opt(tuple((tag("self"), space0, char(','), space0)))(s)?;
+    let self_arg = match op {
+        None => SelfArg::None,
+        Some(_) => SelfArg::SelfType,
+    };
+    Ok((s, self_arg))
+}
+
 pub fn parse_func_definition_info(s: &str) -> IResult<&str, FuncDefinitionInfo> {
-    let (s, (_, _, func_id, _, generics_opt, _, _, _, op, _, _, _, _, return_type, _, where_sec)) = 
+    let (s, (_, _, func_id, _, generics_opt, _, _, _, self_arg, op, _, _, _, _, return_type, _, where_sec)) = 
         tuple((tag("fn"), space1, parse_identifier, space0, opt(tuple((char('<'), space0, opt(tuple((parse_type_id, space0, many0(tuple((char(','), space0, parse_type_id, space0))), opt(char(',')), space0))), char('>'), space0))), space0,
-               char('('), space0,
+            char('('), space0, parse_self_arg,
             opt(tuple((parse_identifier, space0, char(':'), space0, parse_type_spec, space0, many0(tuple((char(','), space0, parse_identifier, space0, char(':'), space0, parse_type_spec, space0))), opt(char(',')), space0))),
             char(')'), space0, tag("->"), space0, parse_type_spec, space0, parse_where_section))(s)?;
     let generics = match generics_opt {
@@ -186,12 +204,20 @@ pub fn parse_func_definition_info(s: &str) -> IResult<&str, FuncDefinitionInfo> 
         }
         None => Vec::new(),
     };
-    Ok((s, FuncDefinitionInfo { func_id, generics, where_sec, args, return_type }))
+    Ok((s, FuncDefinitionInfo { func_id, generics, where_sec, self_arg, args, return_type }))
 }
 
 pub fn parse_func_definition(s: &str) -> IResult<&str, FuncDefinition> {
     let (s, (info, _, _, block, _)) = tuple((parse_func_definition_info, space0, char('{'), parse_block, char('}')))(s)?;
-    Ok((s, FuncDefinition { func_id: info.func_id, generics: info.generics, where_sec: info.where_sec, args: info.args, return_type: info.return_type, block }))
+    Ok((s, FuncDefinition {
+        func_id: info.func_id,
+        generics: info.generics,
+        where_sec: info.where_sec,
+        self_arg: info.self_arg,
+        args: info.args,
+        return_type: info.return_type,
+        block
+    }))
 }
 
 
@@ -205,4 +231,9 @@ fn parse_func_definition_test() {
 fn parse_func_definition2_test() {
     println!("{:?}", parse_func_definition("fn func2<t>(x: t) -> t where t: MyTraits{ x }"));
     println!("{:?}", parse_func_definition_info("fn nest_out<T>(t: T) -> T#MyTrait::Output#MyTrait::Output where T: MyTrait, T#MyTrait::Output: MyTrait"));
+}
+
+#[test]
+fn parse_func_definition_self_test() {
+    println!("{:?}", parse_func_definition("fn func2<t>(self, x: t) -> t where t: MyTraits{ x }"));
 }
