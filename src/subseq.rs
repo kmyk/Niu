@@ -9,6 +9,7 @@ use nom::IResult;
 
 use crate::expression::{ Expression, parse_expression };
 use crate::unary_expr::UnaryExpr;
+use crate::traits::*;
 use crate::unify::*;
 use crate::type_spec::*;
 use crate::trans::*;
@@ -18,6 +19,7 @@ use crate::identifier::*;
 pub enum Subseq {
     Call(Call),
     Member(Member),
+    Index(IndexCall),
 }
 
 pub fn subseq_gen_type(uexpr: &UnaryExpr, subseq: &Subseq, equs: &mut TypeEquations, trs: &TraitsInfo) -> TResult {
@@ -60,6 +62,17 @@ pub fn subseq_gen_type(uexpr: &UnaryExpr, subseq: &Subseq, equs: &mut TypeEquati
             let alpha = mem.mem_id.generate_type_variable(1, equs);
             equs.add_equation(alpha.clone(), Type::Member(Box::new(st.clone()), mem.mem_id.clone()));
             Ok(Type::Member(Box::new(st), mem.mem_id.clone()))
+        }
+        Subseq::Index(IndexCall { ref arg, ref tag }) => {
+            let caller_ty = uexpr.gen_type(equs, trs)?;
+            let arg_ty = arg.as_ref().gen_type(equs, trs)?;
+            Ok(Type::CallEquation(CallEquation {
+                caller_type: Box::new(caller_ty),
+                trait_id: Some(TraitId { id: Identifier::from_str("Index") }),
+                func_id: Identifier::from_str("index"),
+                args: vec![arg_ty],
+                tag: tag.clone(),
+            }))
         }
     }
 
@@ -141,6 +154,11 @@ pub fn subseq_transpile(uexpr: &UnaryExpr, subseq: &Subseq, ta: &TypeAnnotation)
             let caller = uexpr.transpile(ta);
             format!("{}.{}", caller, mem.mem_id.into_string())
         }
+        Subseq::Index(IndexCall { ref arg, .. }) => {
+            let caller = uexpr.transpile(ta);
+            let arg = arg.as_ref().transpile(ta);
+            format!("{}[{}]", caller, arg)
+        }
     }
 }
 
@@ -182,6 +200,17 @@ pub struct Member {
 fn parse_member(s: &str) -> IResult<&str, Subseq> {
     let (s, (_, _, mem_id)) = tuple((char('.'), space0, parse_identifier))(s)?;
     Ok((s, Subseq::Member(Member { mem_id })))
+}
+
+#[derive(Debug)]
+pub struct IndexCall {
+    pub arg: Box<Expression>,
+    tag: Tag,
+}
+
+fn parse_index_call(s: &str) -> IResult<&str, Subseq> {
+    let (s, (_, _, expr, _, _)) = tuple((char('['), space0, parse_expression, space0, char(']')))(s)?;
+    Ok((s, Subseq::Index(IndexCall { arg: Box::new(expr), tag: Tag::new() })))
 }
 
 #[test]
